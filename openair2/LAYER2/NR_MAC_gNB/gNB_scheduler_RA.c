@@ -317,6 +317,7 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
 
       UL_tti_req->SFN = frameP;
       UL_tti_req->Slot = slotP;
+      UL_tti_req->rach_present = 1;
       for (int fdm_index=0; fdm_index < fdm; fdm_index++) { // one structure per frequency domain occasion
         for (int td_index=0; td_index<N_t_slot; td_index++) {
 
@@ -498,7 +499,11 @@ static void nr_schedule_msg2(uint16_t rach_frame,
   while ((eff_slot-rach_slot)<=sl_ahead) {
     eff_slot += tdd_period_slot;
   }
-
+#ifdef ENABLE_AERIAL
+  if (nfapi_mode > 0) { // Aerial needs slot_ahead = 0, requiring addition of another TDD period
+    eff_slot += tdd_period_slot;
+  }
+#endif
   int FR = *scc->downlinkConfigCommon->frequencyInfoDL->frequencyBandList.list.array[0] >= 257 ? nr_FR2 : nr_FR1;
   if (FR==nr_FR2) {
     int num_tdd_period = (eff_slot%nr_slots_per_frame[mu])/tdd_period_slot;
@@ -587,15 +592,7 @@ void nr_initiate_ra_proc(module_id_t module_idP,
        continue;
     }
 
-    uint16_t ra_rnti;
-
-    // ra_rnti from 5.1.3 in 38.321
-    // FK: in case of long PRACH the phone seems to expect the subframe number instead of the slot number here.
-    if (scc->uplinkConfigCommon->initialUplinkBWP->rach_ConfigCommon->choice.setup->prach_RootSequenceIndex.present
-        == NR_RACH_ConfigCommon__prach_RootSequenceIndex_PR_l839)
-      ra_rnti = 1 + symbol + (9 /*slotP*/ * 14) + (freq_index * 14 * 80) + (ul_carrier_id * 14 * 80 * 8);
-    else
-      ra_rnti = 1 + symbol + (slotP * 14) + (freq_index * 14 * 80) + (ul_carrier_id * 14 * 80 * 8);
+    rnti_t ra_rnti = nr_get_ra_rnti(symbol, slotP, freq_index, ul_carrier_id);
 
     // Configure RA BWP
     configure_UE_BWP(nr_mac, scc, NULL, ra, NULL, -1, -1);
@@ -625,7 +622,6 @@ void nr_initiate_ra_proc(module_id_t module_idP,
       }
     }
     LOG_D(NR_MAC, "Frame %d, Slot %d: Activating RA process \n", frameP, slotP);
-    ra->state = Msg2;
     ra->timing_offset = timing_offset;
     ra->preamble_slot = slotP;
 
@@ -661,11 +657,12 @@ void nr_initiate_ra_proc(module_id_t module_idP,
                && !((find_nr_UE(&nr_mac->UE_info, ra->rnti) == NULL) && (find_nr_RA_id(module_idP, CC_id, ra->rnti) == -1)
                     && ra->rnti >= 0x1 && ra->rnti <= 0xffef));
       if (loop == 100) {
-        LOG_E(NR_MAC, "%s:%d:%s: [RAPROC] initialisation random access aborted\n", __FILE__, __LINE__, __FUNCTION__);
+        LOG_E(NR_MAC, "[RAPROC] initialisation random access aborted\n");
         abort();
       }
     }
 
+    ra->state = Msg2;
     ra->RA_rnti = ra_rnti;
     ra->preamble_index = preamble_index;
     ra->beam_id = cc->ssb_index[beam_index];
@@ -688,7 +685,7 @@ void nr_initiate_ra_proc(module_id_t module_idP,
   }
 
   NR_SCHED_UNLOCK(&nr_mac->sched_lock);
-  LOG_E(NR_MAC, "[gNB %d][RAPROC] FAILURE: CC_id %d Frame %d initiating RA procedure for preamble index %d\n", module_idP, CC_id, frameP, preamble_index);
+  LOG_E(NR_MAC, "[gNB %d][RAPROC] FAILURE: CC_id %d %4d.%2d initiating RA procedure for preamble index %d: no free RA process\n", module_idP, CC_id, frameP, slotP, preamble_index);
 
   VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_INITIATE_RA_PROC, 0);
 }
@@ -768,8 +765,14 @@ static void nr_generate_Msg3_retransmission(module_id_t module_idP,
       return;
     }
 
-    LOG_I(NR_MAC, "[gNB %d][RAPROC] Frame %d, Slot %d : CC_id %d Scheduling retransmission of Msg3 in (%d,%d)\n",
-          module_idP, frame, slot, CC_id, sched_frame, sched_slot);
+    LOG_I(NR_MAC,
+          "%4d%2d: RA RNTI %04x CC_id %d Scheduling retransmission of Msg3 in (%d,%d)\n",
+          frame,
+          slot,
+          ra->rnti,
+          CC_id,
+          sched_frame,
+          sched_slot);
 
     buffer_index = ul_buffer_index(sched_frame, sched_slot, mu, nr_mac->UL_tti_req_ahead_size);
     nfapi_nr_ul_tti_request_t *future_ul_tti_req = &nr_mac->UL_tti_req_ahead[CC_id][buffer_index];
@@ -1054,10 +1057,12 @@ static void fill_msg3_pusch_pdu(nfapi_nr_pusch_pdu_t *pusch_pdu,
   LOG_D(NR_MAC, "MSG3 start_sym:%d NR Symb:%d mappingtype:%d, ul_dmrs_symb_pos:%x\n", start_symbol_index, nr_of_symbols, mappingtype, pusch_pdu->ul_dmrs_symb_pos);
   pusch_pdu->dmrs_config_type = 0;
   pusch_pdu->ul_dmrs_scrambling_id = *scc->physCellId; //If provided and the PUSCH is not a msg3 PUSCH, otherwise, L2 should set this to physical cell id.
+  pusch_pdu->pusch_identity = *scc->physCellId; //If provided and the PUSCH is not a msg3 PUSCH, otherwise, L2 should set this to physical cell id.
   pusch_pdu->scid = 0; //DMRS sequence initialization [TS38.211, sec 6.4.1.1.1]. Should match what is sent in DCI 0_1, otherwise set to 0.
   pusch_pdu->dmrs_ports = 1;  // 6.2.2 in 38.214 only port 0 to be used
   pusch_pdu->num_dmrs_cdm_grps_no_data = 2;  // no data in dmrs symbols as in 6.2.2 in 38.214
   pusch_pdu->resource_alloc = 1; //type 1
+  memset(pusch_pdu->rb_bitmap, 0, sizeof(pusch_pdu->rb_bitmap));
   pusch_pdu->rb_start = msg3_first_rb;
   if (msg3_nb_rb > pusch_pdu->bwp_size)
     AssertFatal(1==0,"MSG3 allocated number of RBs exceed the BWP size\n");
@@ -1079,6 +1084,23 @@ static void fill_msg3_pusch_pdu(nfapi_nr_pusch_pdu_t *pusch_pdu,
   pusch_pdu->pusch_data.harq_process_id = 0;
   pusch_pdu->pusch_data.new_data_indicator = (round == 0) ? 1 : 0;;
   pusch_pdu->pusch_data.num_cb = 0;
+
+  // Beamforming
+  pusch_pdu->beamforming.num_prgs = 0;
+  pusch_pdu->beamforming.prg_size = 0; // bwp_size;
+  pusch_pdu->beamforming.dig_bf_interface = 0;
+  if (pusch_pdu->beamforming.num_prgs > 0) {
+    if (pusch_pdu->beamforming.prgs_list == NULL) {
+      pusch_pdu->beamforming.prgs_list = calloc(pusch_pdu->beamforming.num_prgs, sizeof(*pusch_pdu->beamforming.prgs_list));
+    }
+    if (pusch_pdu->beamforming.dig_bf_interface > 0) {
+      if (pusch_pdu->beamforming.prgs_list[0].dig_bf_interface_list == NULL) {
+        pusch_pdu->beamforming.prgs_list[0].dig_bf_interface_list =
+            calloc(pusch_pdu->beamforming.dig_bf_interface, sizeof(*pusch_pdu->beamforming.prgs_list[0].dig_bf_interface_list));
+      }
+    }
+    pusch_pdu->beamforming.prgs_list[0].dig_bf_interface_list[0].beam_idx = 0;
+  }
   int num_dmrs_symb = 0;
   for(int i = start_symbol_index; i < start_symbol_index+nr_of_symbols; i++)
     num_dmrs_symb += (pusch_pdu->ul_dmrs_symb_pos >> i) & 1;
@@ -1253,7 +1275,8 @@ static void nr_generate_Msg2(module_id_t module_idP,
                                  true);
 
     if (CCEIndex < 0) {
-      LOG_E(NR_MAC, "%s(): cannot find free CCE for RA RNTI 0x%04x!\n", __func__, ra->rnti);
+      LOG_E(NR_MAC, "cannot find free CCE for Msg2 of RA RNTI 0x%04x!\n", ra->rnti);
+      nr_clear_ra_proc(module_idP, CC_id, frameP, ra);
       return;
     }
 
@@ -1279,6 +1302,12 @@ static void nr_generate_Msg2(module_id_t module_idP,
     dl_tti_pdsch_pdu->PDUSize = (uint8_t)(2+sizeof(nfapi_nr_dl_tti_pdsch_pdu));
     dl_req->nPDUs+=1;
     nfapi_nr_dl_tti_pdsch_pdu_rel15_t *pdsch_pdu_rel15 = &dl_tti_pdsch_pdu->pdsch_pdu.pdsch_pdu_rel15;
+
+    pdsch_pdu_rel15->precodingAndBeamforming.num_prgs = 0;
+    pdsch_pdu_rel15->precodingAndBeamforming.prg_size = 0;
+    pdsch_pdu_rel15->precodingAndBeamforming.dig_bf_interfaces = 0;
+    pdsch_pdu_rel15->precodingAndBeamforming.prgs_list[0].pm_idx = 0;
+    pdsch_pdu_rel15->precodingAndBeamforming.prgs_list[0].dig_bf_interface_list[0].beam_idx = 0;
 
     LOG_A(NR_MAC,"[gNB %d][RAPROC] CC_id %d Frame %d, slotP %d: Generating RA-Msg2 DCI, rnti 0x%x, state %d, CoreSetType %d\n",
           module_idP, CC_id, frameP, slotP, ra->RA_rnti, ra->state,pdcch_pdu_rel15->CoreSetType);
@@ -1455,7 +1484,7 @@ static void nr_generate_Msg2(module_id_t module_idP,
     }
 
     ra->state = WAIT_Msg3;
-    LOG_W(NR_MAC,"[gNB %d][RAPROC] Frame %d, Subframe %d: rnti %04x RA state %d\n", module_idP, frameP, slotP, ra->rnti, ra->state);
+    LOG_D(NR_MAC,"[gNB %d][RAPROC] Frame %d, Subframe %d: rnti %04x RA state %d\n", module_idP, frameP, slotP, ra->rnti, ra->state);
   }
 }
 
@@ -1698,7 +1727,6 @@ static void nr_generate_Msg4(module_id_t module_idP,
       // Need to wait until data for Msg4 is ready
       if (srb_status.bytes_in_buffer == 0)
         return;
-      LOG_I(NR_MAC, "(%4d.%2d) SRB%d has %d bytes\n", frameP, slotP, lcid, srb_status.bytes_in_buffer);
       mac_sdu_length = srb_status.bytes_in_buffer;
     }
 
@@ -2064,29 +2092,18 @@ static void nr_fill_rar(uint8_t Mod_idP, NR_RA_t *ra, uint8_t *dlsch_buffer, nfa
   LOG_I(NR_MAC, "rar->TCRNTI_1 = 0x%x\n", rar->TCRNTI_1);
   LOG_I(NR_MAC, "rar->TCRNTI_2 = 0x%x\n", rar->TCRNTI_2);
 #endif
-
-  int mcs = (unsigned char) (rar->UL_GRANT_4 >> 4);
-  // time alloc
-  int Msg3_t_alloc = (unsigned char) (rar->UL_GRANT_3 & 0x0f);
-  // frequency alloc
-  int Msg3_f_alloc = (uint16_t) ((rar->UL_GRANT_3 >> 4) | (rar->UL_GRANT_2 << 4) | ((rar->UL_GRANT_1 & 0x03) << 12));
-  // frequency hopping
-  int freq_hopping = (unsigned char) (rar->UL_GRANT_1 >> 2);
-  // TA command
-  int  ta_command = rar->TA2 + (rar->TA1 << 5);
-  // TC-RNTI
-  int t_crnti = rar->TCRNTI_2 + (rar->TCRNTI_1 << 8);
-
-  LOG_D(NR_MAC, "In %s: Transmitted RAR with t_alloc %d f_alloc %d ta_command %d mcs %d freq_hopping %d tpc_command %d csi_req %d t_crnti %x \n",
+  LOG_D(NR_MAC,
+        "In %s: Transmitted RAR with t_alloc %d f_alloc %d ta_command %d mcs %d freq_hopping %d tpc_command %d csi_req %d t_crnti "
+        "%x \n",
         __FUNCTION__,
-        Msg3_t_alloc,
-        Msg3_f_alloc,
-        ta_command,
-        mcs,
-        freq_hopping,
+        rar->UL_GRANT_3 & 0x0f,
+        (rar->UL_GRANT_3 >> 4) | (rar->UL_GRANT_2 << 4) | ((rar->UL_GRANT_1 & 0x03) << 12),
+        rar->TA2 + (rar->TA1 << 5),
+        rar->UL_GRANT_4 >> 4,
+        rar->UL_GRANT_1 >> 2,
         tpc_command,
         csi_req,
-        t_crnti);
+        rar->TCRNTI_2 + (rar->TCRNTI_1 << 8));
 }
 
 void nr_schedule_RA(module_id_t module_idP,

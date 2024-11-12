@@ -19,16 +19,22 @@
  *      contact@openairinterface.org
  */
 
-/*! \file log_if.h
-* \brief log interface
-* \author Navid Nikaein
-* \date 2009 - 2014
-* \version 0.3
-* \warning This component can be runned only in user-space
-* @ingroup routing
-*/
+#ifndef ORAN_CONFIG_H
+#define ORAN_CONFIG_H
 
-// LTS: kept this file for compatibility
-// this file was probably a trial to separate internal functions and external ones
-// but it has never been finished, most source code include directly log.h (not log_if.h)
-#include "log.h"
+#include "stdbool.h"
+#include "stdint.h"
+
+struct xran_fh_init;
+void print_fh_init(const struct xran_fh_init *fh_init);
+struct xran_fh_config;
+void print_fh_config(const struct xran_fh_config *fh_config);
+
+bool set_fh_init(struct xran_fh_init *fh_init);
+struct openair0_config;
+bool set_fh_config(int ru_idx, int num_rus, const struct openair0_config *oai0_cfg, struct xran_fh_config *fh_config);
+
+// hack to workaround LiteOn limitation
+extern int g_kbar;
+
+#endif /* ORAN_CONFIG_H */

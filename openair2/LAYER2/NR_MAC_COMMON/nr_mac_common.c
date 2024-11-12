@@ -2077,6 +2077,7 @@ uint8_t compute_nr_root_seq(NR_RACH_ConfigCommon_t *rach_config,
     if (NCS == 0) return nb_preambles;
     else {
       r = L_ra/NCS;
+      AssertFatal(r > 0, "bad r: L_ra %d, NCS %d\n", L_ra, NCS);
       found_sequences = (nb_preambles/r) + (nb_preambles%r!=0); //ceil(nb_preambles/r)
       LOG_D(MAC, "Computing NR root sequences: found %u sequences\n", found_sequences);
       return (found_sequences);
@@ -2606,20 +2607,23 @@ uint32_t nr_get_code_rate_ul(uint8_t Imcs, uint8_t table_idx) {
 }
 
 // Table 5.1.2.2.1-1 38.214
-uint8_t getRBGSize(uint16_t bwp_size, long rbg_size_config) {
-  
-  AssertFatal(bwp_size < 276,"Invalid BWP Size > 275\n");
-  
-  if (bwp_size < 37)  return (rbg_size_config ? 4 : 2);
-  if (bwp_size < 73)  return (rbg_size_config ? 8 : 4);
-  if (bwp_size < 145) return (rbg_size_config ? 16 : 8);
-  else return 16;
+uint8_t getRBGSize(uint16_t bwp_size, long rbg_size_config)
+{
+  AssertFatal(bwp_size < 276, "Invalid BWP Size %d\n", bwp_size);
+  if (bwp_size < 37)
+    return (rbg_size_config ? 4 : 2);
+  if (bwp_size < 73)
+    return (rbg_size_config ? 8 : 4);
+  if (bwp_size < 145)
+    return (rbg_size_config ? 16 : 8);
+  else
+    return 16;
 }
 
-uint8_t getNRBG(uint16_t bwp_size, uint16_t bwp_start, long rbg_size_config) {
-
-  uint8_t rbg_size = getRBGSize(bwp_size,rbg_size_config);
-  return (uint8_t)ceil((float)(bwp_size+(bwp_start % rbg_size))/(float)rbg_size);
+uint8_t getNRBG(uint16_t bwp_size, uint16_t bwp_start, long rbg_size_config)
+{
+  uint8_t rbg_size = getRBGSize(bwp_size, rbg_size_config);
+  return (uint8_t)ceil((float)(bwp_size + (bwp_start % rbg_size)) / (float)rbg_size);
 }
 
 uint8_t getAntPortBitWidth(NR_SetupRelease_DMRS_DownlinkConfig_t *typeA, NR_SetupRelease_DMRS_DownlinkConfig_t *typeB) {
@@ -4439,6 +4443,8 @@ void get_type0_PDCCH_CSS_config_parameters(NR_Type0_PDCCH_CSS_config_t *type0_PD
 
   type0_PDCCH_CSS_config->n_0 = ((uint32_t)(big_o*(1<<scs_pdcch)) + (uint32_t)(type0_PDCCH_CSS_config->ssb_index*big_m))%num_slot_per_frame;
   type0_PDCCH_CSS_config->cset_start_rb = ssb_offset_point_a - type0_PDCCH_CSS_config->rb_offset;
+  AssertFatal(type0_PDCCH_CSS_config->cset_start_rb >= 0, "Invalid CSET0 start PRB %d SSB offset point A %d RB offset %d\n",
+              type0_PDCCH_CSS_config->cset_start_rb, ssb_offset_point_a, type0_PDCCH_CSS_config->rb_offset);
 }
 
 void fill_coresetZero(NR_ControlResourceSet_t *coreset0, NR_Type0_PDCCH_CSS_config_t *type0_PDCCH_CSS_config)
@@ -5318,4 +5324,20 @@ uint16_t compute_PDU_length(uint32_t num_TLV, uint16_t total_length)
   // For each TLV, add 2 bytes tag + 2 bytes length + value size without padding
   pdu_length += (num_TLV * 4) + total_length;
   return pdu_length;
+}
+
+// RA-RNTI computation (associated to PRACH occasion in which the RA Preamble is transmitted)
+// - this does not apply to contention-free RA Preamble for beam failure recovery request
+// - getting star_symb, SFN_nbr from table 6.3.3.2-3 (TDD and FR1 scenario)
+// - s_id is starting symbol of the PRACH occasion [0...14]
+// - t_id is the first slot of the PRACH occasion in a system frame [0...80]
+// - f_id: index of the PRACH occasion in the frequency domain
+// - ul_carrier_id: UL carrier used for RA preamble transmission, hardcoded for NUL carrier
+rnti_t nr_get_ra_rnti(uint8_t s_id, uint8_t t_id, uint8_t f_id, uint8_t ul_carrier_id)
+{
+  // 3GPP TS 38.321 Section 5.1.3
+  rnti_t ra_rnti = 1 + s_id + 14 * t_id + 1120 * f_id + 8960 * ul_carrier_id;
+  LOG_D(MAC, "f_id %d t_id %d s_id %d ul_carrier_id %d Computed RA_RNTI is 0x%04X\n", f_id, t_id, s_id, ul_carrier_id, ra_rnti);
+
+  return ra_rnti;
 }

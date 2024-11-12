@@ -32,7 +32,6 @@
 
 #include "common/utils/LOG/log.h"
 #include "common/utils/nr/nr_common.h"
-#include "common/utils/LOG/log_extern.h"
 #include "assertions.h"
 #include "oai_asn1.h"
 #include "executables/softmodem-common.h"
@@ -91,6 +90,9 @@
 #include "RRC/NR/nr_rrc_extern.h"
 #include "openair2/LAYER2/nr_pdcp/nr_pdcp.h"
 #include "nfapi/oai_integration/vendor_ext.h"
+#ifdef ENABLE_AERIAL
+#include "nfapi/oai_integration/aerial/fapi_vnf_p5.h"
+#endif
 
 extern uint16_t sf_ahead;
 
@@ -809,7 +811,6 @@ void RCconfig_nr_prs(void)
 void RCconfig_NR_L1(void)
 {
   int j = 0;
-
   if (RC.gNB == NULL) {
     RC.gNB = (PHY_VARS_gNB **)malloc((1 + NUMBER_OF_gNB_MAX) * sizeof(PHY_VARS_gNB *));
     LOG_I(NR_PHY, "RC.gNB = %p\n", RC.gNB);
@@ -885,6 +886,7 @@ void RCconfig_NR_L1(void)
       RC.gNB[j]->L1_tx_thread_core = *(L1_ParamList.paramarray[j][L1_TX_THREAD_CORE].iptr);
       LOG_I(PHY,"L1_RX_THREAD_CORE %d (%d)\n",*(L1_ParamList.paramarray[j][L1_RX_THREAD_CORE].iptr),L1_RX_THREAD_CORE);
       RC.gNB[j]->TX_AMP = (int16_t)(32767.0 / pow(10.0, .05 * (double)(*L1_ParamList.paramarray[j][L1_TX_AMP_BACKOFF_dB].uptr)));
+      RC.gNB[j]->phase_comp = *L1_ParamList.paramarray[j][L1_PHASE_COMP].uptr;
       LOG_I(PHY, "TX_AMP = %d (-%d dBFS)\n", RC.gNB[j]->TX_AMP, *L1_ParamList.paramarray[j][L1_TX_AMP_BACKOFF_dB].uptr);
       AssertFatal(RC.gNB[j]->TX_AMP > 300, "TX_AMP is too small, must be larger than 300 (is %d)\n", RC.gNB[j]->TX_AMP);
       if (strcmp(*(L1_ParamList.paramarray[j][L1_TRANSPORT_N_PREFERENCE_IDX].strptr), "local_mac") == 0) {
@@ -1303,6 +1305,11 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
         configure_nr_nfapi_vnf(
             RC.nrmac[j]->eth_params_s.my_addr, RC.nrmac[j]->eth_params_s.my_portc, RC.nrmac[j]->eth_params_s.remote_addr, RC.nrmac[j]->eth_params_s.remote_portd, RC.nrmac[j]->eth_params_s.my_portd);
         printf("**************** RETURNED FROM configure_nfapi_vnf() vnf_port:%d\n", RC.nrmac[j]->eth_params_s.my_portc);
+      } else if(strcmp(*(MacRLC_ParamList.paramarray[j][MACRLC_TRANSPORT_S_PREFERENCE_IDX].strptr), "aerial") == 0){
+#ifdef ENABLE_AERIAL
+        printf("Configuring VNF for Aerial connection\n");
+        aerial_configure_nr_fapi_vnf();
+#endif
       } else { // other midhaul
         AssertFatal(1 == 0, "MACRLC %d: %s unknown southbound midhaul\n", j, *(MacRLC_ParamList.paramarray[j][MACRLC_TRANSPORT_S_PREFERENCE_IDX].strptr));
       }

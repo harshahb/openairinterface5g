@@ -293,7 +293,6 @@ void set_options(int CC_id, PHY_VARS_NR_UE *UE){
   UE->chest_freq           = nrUE_params.chest_freq;
   UE->chest_time           = nrUE_params.chest_time;
   UE->no_timing_correction = nrUE_params.no_timing_correction;
-  UE->timing_advance       = nrUE_params.timing_advance;
 
   LOG_I(PHY,"Set UE_fo_compensation %d, UE_scan_carrier %d, UE_no_timing_correction %d \n, chest-freq %d, chest-time %d\n",
         UE->UE_fo_compensation, UE->UE_scan_carrier, UE->no_timing_correction, UE->chest_freq, UE->chest_time);
@@ -307,7 +306,7 @@ void set_options(int CC_id, PHY_VARS_NR_UE *UE){
 
   fp->nb_antennas_rx       = nrUE_params.nb_antennas_rx;
   fp->nb_antennas_tx       = nrUE_params.nb_antennas_tx;
-  fp->threequarter_fs      = nrUE_params.threequarter_fs;
+  fp->threequarter_fs = get_softmodem_params()->threequarter_fs;
   fp->N_RB_DL              = nrUE_params.N_RB_DL;
   fp->ssb_start_subcarrier = nrUE_params.ssb_start_subcarrier;
   fp->ofdm_offset_divisor  = nrUE_params.ofdm_offset_divisor;
@@ -368,7 +367,8 @@ void init_openair0(void) {
   }
 }
 
-static void init_pdcp(int ue_id) {
+static void init_pdcp(int ue_id)
+{
   uint32_t pdcp_initmask = (!IS_SOFTMODEM_NOS1) ? LINK_ENB_PDCP_TO_GTPV1U_BIT : (LINK_ENB_PDCP_TO_GTPV1U_BIT | PDCP_USE_NETLINK_BIT | LINK_ENB_PDCP_TO_IP_DRIVER_BIT);
 
   /*if (IS_SOFTMODEM_RFSIM || (nfapi_getmode()==NFAPI_UE_STUB_PNF)) {
@@ -497,11 +497,11 @@ int main(int argc, char **argv)
   if (ouput_vcd) {
     vcd_signal_dumper_init("/tmp/openair_dump_nrUE.vcd");
   }
-
-  #ifndef PACKAGE_VERSION
-#  define PACKAGE_VERSION "UNKNOWN-EXPERIMENTAL"
+#ifndef PACKAGE_VERSION
+#define PACKAGE_VERSION "UNKNOWN-EXPERIMENTAL"
 #endif
-  LOG_I(HW, "Version: %s\n", PACKAGE_VERSION);
+  // strdup to put the sring in the core file for post mortem identification
+  LOG_I(HW, "Version: %s\n", strdup(PACKAGE_VERSION));
 
   PHY_vars_UE_g = malloc(sizeof(*PHY_vars_UE_g));
   PHY_vars_UE_g[0] = malloc(sizeof(*PHY_vars_UE_g[0]) * MAX_NUM_CCs);
@@ -510,20 +510,17 @@ int main(int argc, char **argv)
     memset(PHY_vars_UE_g[0][CC_id], 0, sizeof(*PHY_vars_UE_g[0][CC_id]));
   }
 
-  init_NR_UE(NB_UE_INST, uecap_file, reconfig_file, rbconfig_file);
-
   int mode_offset = get_softmodem_params()->nsa ? NUMBER_OF_UE_MAX : 1;
   uint16_t node_number = get_softmodem_params()->node_number;
   ue_id_g = (node_number == 0) ? 0 : node_number - 2;
   AssertFatal(ue_id_g >= 0, "UE id is expected to be nonnegative.\n");
-  if(IS_SOFTMODEM_NOS1 || get_softmodem_params()->sa || get_softmodem_params()->nsa) {
-    if(node_number == 0) {
-      init_pdcp(0);
-    }
-    else {
-      init_pdcp(mode_offset + ue_id_g);
-    }
-  }
+
+  if(node_number == 0)
+    init_pdcp(0);
+  else
+    init_pdcp(mode_offset + ue_id_g);
+
+  init_NR_UE(NB_UE_INST, uecap_file, reconfig_file, rbconfig_file);
 
   if (get_softmodem_params()->emulate_l1) {
     RCconfig_nr_ue_macrlc();
@@ -570,9 +567,6 @@ int main(int argc, char **argv)
     }
 
     init_openair0();
-    // init UE_PF_PO and mutex lock
-    pthread_mutex_init(&ue_pf_po_mutex, NULL);
-    memset (&UE_PF_PO[0][0], 0, sizeof(UE_PF_PO_t)*NUMBER_OF_UE_MAX*MAX_NUM_CCs);
     set_latency_target();
 
     if(IS_SOFTMODEM_DOSCOPE_QT) {

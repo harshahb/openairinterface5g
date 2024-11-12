@@ -59,7 +59,7 @@
 // Definitions for MAC control and data
 #define NR_BCCH_DL_SCH 3 // SI
 #define NR_BCCH_BCH 5    // MIB
-#define CCCH_PAYLOAD_SIZE_MAX 512 
+#define NR_CCCH_PAYLOAD_SIZE_MAX 512
 #define RAR_PAYLOAD_SIZE_MAX  128
 #define MAX_CSI_REPORTCONFIG  48
 
@@ -480,7 +480,7 @@ typedef struct Type0_PDCCH_CSS_config_s {
   uint32_t search_space_frame_period;  // in slots
   uint32_t ssb_length;
   uint32_t ssb_index;
-  uint32_t cset_start_rb;
+  int32_t cset_start_rb;
   NR_SubcarrierSpacing_t scs_pdcch;
   bool active;
 } NR_Type0_PDCCH_CSS_config_t;

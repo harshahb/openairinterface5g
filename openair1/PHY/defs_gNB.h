@@ -562,7 +562,6 @@ typedef struct PHY_VARS_gNB_s {
   PHY_MEASUREMENTS_gNB measurements;
   NR_IF_Module_t       *if_inst;
   NR_UL_IND_t          UL_INFO;
-  pthread_mutex_t      UL_INFO_mutex;
 
   /// NFAPI RX ULSCH information
   nfapi_nr_rx_data_pdu_t  rx_pdu_list[MAX_UL_PDUS_PER_SLOT];
@@ -604,6 +603,10 @@ typedef struct PHY_VARS_gNB_s {
 
   // reference amplitude for TX
   int16_t TX_AMP;
+
+  // flag to activate 3GPP phase symbolwise rotation
+  bool phase_comp;
+
   // PUCCH0 Look-up table for cyclic-shifts
   NR_gNB_PUCCH0_LUT_t pucch0_lut;
 
@@ -635,8 +638,6 @@ typedef struct PHY_VARS_gNB_s {
   uint32_t ofdm_offset_divisor;
 
   int ldpc_offload_flag;
-
-  int reorder_thread_disable;
 
   int max_ldpc_iterations;
   /// indicate the channel estimation technique in time domain
@@ -690,8 +691,8 @@ typedef struct PHY_VARS_gNB_s {
   time_stats_t rx_pusch_init_stats;
   time_stats_t rx_pusch_symbol_processing_stats;
   time_stats_t ul_indication_stats;
+  time_stats_t slot_indication_stats;
   time_stats_t schedule_response_stats;
-  time_stats_t ulsch_decoding_stats;
   time_stats_t ulsch_ldpc_decoding_stats;
   time_stats_t ulsch_deinterleaving_stats;
   time_stats_t ulsch_channel_estimation_stats;
@@ -715,6 +716,7 @@ typedef struct PHY_VARS_gNB_s {
   notifiedFIFO_t L1_tx_free;
   notifiedFIFO_t L1_tx_filled;
   notifiedFIFO_t L1_tx_out;
+  notifiedFIFO_t L1_rx_out;
   notifiedFIFO_t resp_RU_tx;
   tpool_t threadPool;
   int nbSymb;
@@ -792,9 +794,7 @@ union ldpcReqUnion {
 
 typedef struct processingData_L1 {
   int frame_rx;
-  int frame_tx;
   int slot_rx;
-  int slot_tx;
   openair0_timestamp timestamp_tx;
   PHY_VARS_gNB *gNB;
 } processingData_L1_t;
@@ -808,6 +808,8 @@ typedef enum {
 typedef struct processingData_L1tx {
   int frame;
   int slot;
+  int frame_rx;
+  int slot_rx;
   openair0_timestamp timestamp_tx;
   PHY_VARS_gNB *gNB;
   nfapi_nr_dl_tti_pdcch_pdu pdcch_pdu[NFAPI_NR_MAX_NB_CORESETS];
@@ -822,4 +824,9 @@ typedef struct processingData_L1tx {
   int sched_response_id;
 } processingData_L1tx_t;
 
+typedef struct processingData_L1rx {
+  int frame_rx;
+  int slot_rx;
+  PHY_VARS_gNB *gNB;
+} processingData_L1rx_t;
 #endif

@@ -19,13 +19,35 @@
  *      contact@openairinterface.org
  */
 
-#include "log.h"
+#ifndef _ORAN_ISOLATE_H_
+#define _ORAN_ISOLATE_H_
 
-extern log_t *g_log;
+#include <stdio.h>
 
-extern const mapping log_level_names[];
-extern const mapping log_options[];
-extern const mapping log_maskmap[];
-extern int log_mem_flag;
-extern char * log_mem_filename;
-extern char logmem_filename[1024];
+#include <pthread.h>
+#include <stdint.h>
+
+#include "xran_fh_o_du.h"
+
+/*
+ * Structure added to bear the information needed from OAI RU
+ */
+typedef struct ru_info_s {
+  // Needed for UL
+  int nb_rx;
+  int32_t **rxdataF;
+
+  // Needed for DL
+  int nb_tx;
+  int32_t **txdataF_BF;
+
+  // Needed for Prach
+  int16_t **prach_buf;
+} ru_info_t;
+
+int xran_fh_rx_read_slot(ru_info_t *ru, int *frame, int *slot);
+int xran_fh_tx_send_slot(ru_info_t *ru, int frame, int slot, uint64_t timestamp);
+
+int compute_xran_statistics();
+
+#endif /* _ORAN_ISOLATE_H_ */

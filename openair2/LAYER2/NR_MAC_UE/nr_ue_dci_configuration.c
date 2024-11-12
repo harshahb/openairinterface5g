@@ -38,13 +38,12 @@
 #include "common/utils/nr/nr_common.h"
 #include "executables/softmodem-common.h"
 #include <stdio.h>
-#include "nfapi_nr_interface.h"
 
 void fill_dci_search_candidates(const NR_SearchSpace_t *ss,
                                 fapi_nr_dl_config_dci_dl_pdu_rel15_t *rel15,
                                 const uint32_t Y)
 {
-  LOG_D(NR_MAC,"Filling search candidates for DCI\n");
+  LOG_D(NR_MAC_DCI, "Filling search candidates for DCI\n");
 
   int i = 0;
   for (int maxL = 16; maxL > 0; maxL >>= 1) {
@@ -55,7 +54,7 @@ void fill_dci_search_candidates(const NR_SearchSpace_t *ss,
                                 maxL);
     if (max_number_of_candidates == 0)
       continue;
-    LOG_D(NR_MAC,"L %d, max number of candidates %d, aggregation %d\n", maxL, max_number_of_candidates, aggregation);
+    LOG_D(NR_MAC_DCI, "L %d, max number of candidates %d, aggregation %d\n", maxL, max_number_of_candidates, aggregation);
     int N_cce_sym = 0; // nb of rbs of coreset per symbol
     for (int f = 0; f < 6; f++) {
       for (int t = 0; t < 8; t++) {
@@ -67,13 +66,20 @@ void fill_dci_search_candidates(const NR_SearchSpace_t *ss,
       continue;
     for (int j = 0; j < max_number_of_candidates; j++) {
       int first_cce = aggregation * ((Y + ((j * N_cces) / (aggregation * max_number_of_candidates)) + 0) % (N_cces / aggregation));
-      LOG_D(NR_MAC,"Candidate %d of %d first_cce %d (L %d N_cces %d Y %d)\n", j, max_number_of_candidates, first_cce, aggregation, N_cces, Y);
+      LOG_D(NR_MAC_DCI,
+            "Candidate %d of %d first_cce %d (L %d N_cces %d Y %d)\n",
+            j,
+            max_number_of_candidates,
+            first_cce,
+            aggregation,
+            N_cces,
+            Y);
       // to avoid storing more than one candidate with the same aggregation and starting CCE (duplicated candidate)
       bool duplicated = false;
       for (int k = 0; k < i; k++) {
         if (rel15->CCE[k] == first_cce && rel15->L[k] == aggregation) {
           duplicated = true;
-          LOG_D(NR_MAC, "Candidate %d of %d is duplicated\n", j, max_number_of_candidates);
+          LOG_D(NR_MAC_DCI, "Candidate %d of %d is duplicated\n", j, max_number_of_candidates);
         }
       }
       if (!duplicated) {
@@ -121,7 +127,7 @@ void config_dci_pdu(NR_UE_MAC_INST_t *mac,
     coreset = ue_get_coreset(pdcch_config, coreset_id);
     rel15->coreset.CoreSetType = NFAPI_NR_CSET_CONFIG_PDCCH_CONFIG;
   } else {
-    coreset = pdcch_config->coreset0;
+    coreset = mac->coreset0;
     rel15->coreset.CoreSetType = NFAPI_NR_CSET_CONFIG_MIB_SIB1;
   }
 
@@ -296,7 +302,9 @@ void config_dci_pdu(NR_UE_MAC_INST_t *mac,
 
   #ifdef DEBUG_DCI
     for (int i = 0; i < rel15->num_dci_options; i++) {
-      LOG_D(MAC, "[DCI_CONFIG] Configure DCI PDU: rnti_type %d BWPSize %d BWPStart %d rel15->SubcarrierSpacing %d rel15->dci_format %d rel15->dci_length %d sps %d monitoringSymbolsWithinSlot %d \n",
+      LOG_D(NR_MAC_DCI,
+            "[DCI_CONFIG] Configure DCI PDU: rnti_type %d BWPSize %d BWPStart %d rel15->SubcarrierSpacing %d rel15->dci_format %d "
+            "rel15->dci_length %d sps %d monitoringSymbolsWithinSlot %d \n",
             rnti_type,
             rel15->BWPSize,
             rel15->BWPStart,
@@ -483,25 +491,25 @@ void ue_dci_configuration(NR_UE_MAC_INST_t *mac, fapi_nr_dl_config_request_t *dl
                                           mac->mib_ssb,
                                           1, // If the UE is not configured with a periodicity, the UE assumes a periodicity of a half frame
                                           ssb_offset_point_a);
-    if (pdcch_config->search_space_zero == NULL)
-      pdcch_config->search_space_zero = calloc(1, sizeof(*pdcch_config->search_space_zero));
-    if (pdcch_config->coreset0 == NULL)
-      pdcch_config->coreset0 = calloc(1, sizeof(*pdcch_config->coreset0));
-    fill_coresetZero(pdcch_config->coreset0, &mac->type0_PDCCH_CSS_config);
-    fill_searchSpaceZero(pdcch_config->search_space_zero, slots_per_frame, &mac->type0_PDCCH_CSS_config);
-    if (is_ss_monitor_occasion(frame, slot, slots_per_frame, pdcch_config->search_space_zero)) {
-      LOG_D(NR_MAC, "Monitoring DCI for SIB1 in frame %d slot %d\n", frame, slot);
-      config_dci_pdu(mac, dl_config, TYPE_SI_RNTI_, slot, pdcch_config->search_space_zero);
+    if (mac->search_space_zero == NULL)
+      mac->search_space_zero = calloc(1, sizeof(*mac->search_space_zero));
+    if (mac->coreset0 == NULL)
+      mac->coreset0 = calloc(1, sizeof(*mac->coreset0));
+    fill_coresetZero(mac->coreset0, &mac->type0_PDCCH_CSS_config);
+    fill_searchSpaceZero(mac->search_space_zero, slots_per_frame, &mac->type0_PDCCH_CSS_config);
+    if (is_ss_monitor_occasion(frame, slot, slots_per_frame, mac->search_space_zero)) {
+      LOG_D(NR_MAC_DCI, "Monitoring DCI for SIB1 in frame %d slot %d\n", frame, slot);
+      config_dci_pdu(mac, dl_config, TYPE_SI_RNTI_, slot, mac->search_space_zero);
     }
   }
   if (mac->get_otherSI) {
     // If searchSpaceOtherSystemInformation is set to zero,
     // PDCCH monitoring occasions for SI message reception in SI-window
     // are same as PDCCH monitoring occasions for SIB1
-    const NR_SearchSpace_t *ss = pdcch_config->otherSI_SS ? pdcch_config->otherSI_SS : pdcch_config->search_space_zero;
+    const NR_SearchSpace_t *ss = pdcch_config->otherSI_SS ? pdcch_config->otherSI_SS : mac->search_space_zero;
     // TODO configure SI-window
     if (monitior_dci_for_other_SI(mac, ss, slots_per_frame, frame, slot)) {
-      LOG_D(NR_MAC, "Monitoring DCI for other SIs in frame %d slot %d\n", frame, slot);
+      LOG_D(NR_MAC_DCI, "Monitoring DCI for other SIs in frame %d slot %d\n", frame, slot);
       config_dci_pdu(mac, dl_config, TYPE_SI_RNTI_, slot, ss);
     }
   }
