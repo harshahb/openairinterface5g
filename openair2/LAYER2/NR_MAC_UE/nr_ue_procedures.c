@@ -178,7 +178,7 @@ int get_rnti_type(const NR_UE_MAC_INST_t *mac, const uint16_t rnti)
 
   if (rnti == ra->ra_rnti) {
     rnti_type = TYPE_RA_RNTI_;
-  } else if (rnti == ra->t_crnti && (ra->ra_state == WAIT_RAR || ra->ra_state == WAIT_CONTENTION_RESOLUTION)) {
+  } else if (rnti == ra->t_crnti && (ra->ra_state == nrRA_WAIT_RAR || ra->ra_state == nrRA_WAIT_CONTENTION_RESOLUTION)) {
     rnti_type = TYPE_TC_RNTI_;
   } else if (rnti == mac->crnti) {
     rnti_type = TYPE_C_RNTI_;
@@ -189,10 +189,8 @@ int get_rnti_type(const NR_UE_MAC_INST_t *mac, const uint16_t rnti)
   } else {
     AssertFatal(1 == 0, "Not identified/handled rnti %d \n", rnti);
   }
-
-    LOG_D(MAC, "Returning rnti_type %s \n", rnti_types(rnti_type));
-
-    return rnti_type;
+  LOG_D(MAC, "Returning rnti_type %s \n", rnti_types(rnti_type));
+  return rnti_type;
 }
 
 void nr_ue_decode_mib(NR_UE_MAC_INST_t *mac, int cc_id)
@@ -264,7 +262,7 @@ int8_t nr_ue_decode_BCCH_DL_SCH(NR_UE_MAC_INST_t *mac,
 {
   if(ack_nack) {
     LOG_D(NR_MAC, "Decoding NR-BCCH-DL-SCH-Message (SIB1 or SI)\n");
-    nr_mac_rrc_data_ind_ue(mac->ue_id, cc_id, gNB_index, 0, 0, 0, NR_BCCH_DL_SCH, (uint8_t *) pduP, pdu_len);
+    nr_mac_rrc_data_ind_ue(mac->ue_id, cc_id, gNB_index, 0, 0, 0, mac->physCellId, 0, NR_BCCH_DL_SCH, (uint8_t *) pduP, pdu_len);
     mac->get_sib1 = false;
     mac->get_otherSI = false;
   }
@@ -447,7 +445,7 @@ static int nr_ue_process_dci_ul_00(NR_UE_MAC_INST_t *mac,
   if (!pdu)
     return -1;
 
-  int ret = nr_config_pusch_pdu(mac, &tda_info, &pdu->pusch_config_pdu, dci, NULL, dci_ind->rnti, NR_UL_DCI_FORMAT_0_0);
+  int ret = nr_config_pusch_pdu(mac, &tda_info, &pdu->pusch_config_pdu, dci, NULL, dci_ind->rnti, dci_ind->ss_type, NR_UL_DCI_FORMAT_0_0);
   if (ret != 0)
     remove_ul_config_last_item(pdu);
   release_ul_config(pdu, false);
@@ -520,7 +518,7 @@ static int nr_ue_process_dci_ul_01(NR_UE_MAC_INST_t *mac,
   fapi_nr_ul_config_request_pdu_t *pdu = lockGet_ul_config(mac, frame_tx, slot_tx, FAPI_NR_UL_CONFIG_TYPE_PUSCH);
   if (!pdu)
     return -1;
-  int ret = nr_config_pusch_pdu(mac, &tda_info, &pdu->pusch_config_pdu, dci, NULL, dci_ind->rnti, NR_UL_DCI_FORMAT_0_1);
+  int ret = nr_config_pusch_pdu(mac, &tda_info, &pdu->pusch_config_pdu, dci, NULL, dci_ind->rnti, dci_ind->ss_type, NR_UL_DCI_FORMAT_0_1);
   if (ret != 0)
     remove_ul_config_last_item(pdu);
   release_ul_config(pdu, false);
@@ -663,6 +661,13 @@ static int nr_ue_process_dci_dl_10(NR_UE_MAC_INST_t *mac,
     dlsch_pdu->dlDmrsScramblingId = *dl_dmrs_config->scramblingID0;
   else
     dlsch_pdu->dlDmrsScramblingId = mac->physCellId;
+
+  if (get_rnti_type(mac, dci_ind->rnti) == TYPE_C_RNTI_
+      && dci_ind->ss_type != NR_SearchSpace__searchSpaceType_PR_common
+      && pdsch_config->dataScramblingIdentityPDSCH)
+    dlsch_pdu->dlDataScramblingId = *pdsch_config->dataScramblingIdentityPDSCH;
+  else
+    dlsch_pdu->dlDataScramblingId = mac->physCellId;
 
   /* dmrs symbol positions*/
   dlsch_pdu->dlDmrsSymbPos = fill_dmrs_mask(pdsch_config,
@@ -974,6 +979,11 @@ static int nr_ue_process_dci_dl_11(NR_UE_MAC_INST_t *mac,
       LOG_E(MAC, "Invalid dmrs sequence initialization value %d\n", dci->dmrs_sequence_initialization.val);
       return -1;
   }
+
+  if (pdsch_Config->dataScramblingIdentityPDSCH)
+    dlsch_pdu->dlDataScramblingId = *pdsch_Config->dataScramblingIdentityPDSCH;
+  else
+    dlsch_pdu->dlDataScramblingId = mac->physCellId;
 
   dlsch_pdu->dmrsConfigType = dl_dmrs_config->dmrs_Type == NULL ? NFAPI_NR_DMRS_TYPE1 : NFAPI_NR_DMRS_TYPE2;
 
@@ -2511,8 +2521,7 @@ int8_t nr_ue_get_SR(NR_UE_MAC_INST_t *mac, frame_t frameP, slot_t slot)
       // release all pucch resource
       //mac->physicalConfigDedicated = NULL; // todo
       //mac->ul_active = 0; // todo
-      mac->BSR_reporting_active =
-        NR_BSR_TRIGGER_NONE;
+      si->BSR_reporting_active = NR_BSR_TRIGGER_NONE;
       LOG_I(NR_MAC, "[UE %d] Release all SRs \n", mac->ue_id);
     }
     si->SR_pending = 0;
@@ -3504,7 +3513,7 @@ void nr_ue_process_mac_pdu(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *dl_i
         // MAC SDU: 6 bytes (UE Contention Resolution Identity)
         mac_len = 6;
 
-        if(ra->ra_state == WAIT_CONTENTION_RESOLUTION) {
+        if (ra->ra_state == nrRA_WAIT_CONTENTION_RESOLUTION) {
           LOG_I(MAC, "[UE %d][RAPROC] Frame %d : received contention resolution identity: 0x%02x%02x%02x%02x%02x%02x Terminating RA procedure\n",
                 mac->ue_id,
                 frameP,
@@ -3530,7 +3539,7 @@ void nr_ue_process_mac_pdu(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *dl_i
           } else if (!ra_success){
             // TODO: Handle failure of RA procedure @ MAC layer
             //  nr_ra_failed(module_idP, CC_id, prach_resources, frameP, slot); // prach_resources is a PHY structure
-            ra->ra_state = RA_UE_IDLE;
+            ra->ra_state = nrRA_UE_IDLE;
             ra->RA_active = 0;
           }
         }
@@ -3609,8 +3618,7 @@ int nr_write_ce_ulsch_pdu(uint8_t *mac_ce,
           pdu, mac_ce);
   }
 
-  if (crnti && (!get_softmodem_params()->sa && get_softmodem_params()->do_ra && mac->ra.ra_state != RA_SUCCEEDED)) {
-
+  if (crnti && (!get_softmodem_params()->sa && get_softmodem_params()->do_ra && mac->ra.ra_state != nrRA_SUCCEEDED)) {
     LOG_D(NR_MAC, "In %s: generating C-RNTI MAC CE with C-RNTI %x\n", __FUNCTION__, (*crnti));
 
     // MAC CE fixed subheader
@@ -3625,7 +3633,6 @@ int nr_write_ce_ulsch_pdu(uint8_t *mac_ce,
     mac_ce_size = sizeof(uint16_t);
     mac_ce += mac_ce_size;
     mac_ce_len += mac_ce_size + sizeof(NR_MAC_SUBHEADER_FIXED);
-
   }
 
   if (truncated_bsr) {
@@ -3774,7 +3781,7 @@ int nr_write_ce_ulsch_pdu(uint8_t *mac_ce,
 // - optimize: mu_pusch, j and table_6_1_2_1_1_2_time_dom_res_alloc_A are already defined in nr_ue_procedures
 static void nr_ue_process_rar(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *dl_info, int pdu_id)
 {
-  frame_t frame  = dl_info->frame;
+  frame_t frame = dl_info->frame;
   int slot = dl_info->slot;
 
   if(dl_info->rx_ind->rx_indication_body[pdu_id].pdsch_pdu.ack_nack == 0) {
@@ -3976,13 +3983,20 @@ static void nr_ue_process_rar(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *d
       if (!ra->cfra) {
         ra->t_crnti = rar->TCRNTI_2 + (rar->TCRNTI_1 << 8);
         rnti = ra->t_crnti;
-        nr_mac_rrc_msg3_ind(mac->ue_id, rnti);
+        nr_mac_rrc_msg3_ind(mac->ue_id, rnti, dl_info->gNB_index);
       }
       fapi_nr_ul_config_request_pdu_t *pdu = lockGet_ul_config(mac, frame_tx, slot_tx, FAPI_NR_UL_CONFIG_TYPE_PUSCH);
       if (!pdu)
         return;
       // Config Msg3 PDU
-      int ret = nr_config_pusch_pdu(mac, &tda_info, &pdu->pusch_config_pdu, NULL, &rar_grant, rnti, NR_DCI_NONE);
+      int ret = nr_config_pusch_pdu(mac,
+                                    &tda_info,
+                                    &pdu->pusch_config_pdu,
+                                    NULL,
+                                    &rar_grant,
+                                    rnti,
+                                    NR_SearchSpace__searchSpaceType_PR_common,
+                                    NR_DCI_NONE);
       if (ret != 0)
         remove_ul_config_last_item(pdu);
       release_ul_config(pdu, false);
