@@ -1288,6 +1288,7 @@ void pf_ul(module_id_t module_id,
     /* Calculate coefficient*/
     const uint32_t tbs = ul_pf_tbs[current_BWP->mcs_table][sched_pusch->mcs];
     float coeff_ue = (float) tbs / UE->ul_thr_ue;
+    coeff_ue = coeff_ue * sched_ctrl->estimated_ul_buffer;
     LOG_D(NR_MAC,"rnti %04x b %d, ul_thr_ue %f, tbs %d, coeff_ue %f\n",
           UE->rnti, b, UE->ul_thr_ue, tbs, coeff_ue);
     UE_sched[curUE].coef=coeff_ue;
